@@ -1,5 +1,6 @@
 import functools
 import logging
+import os
 
 from galaxy import model
 from galaxy.jobs.runners import AsynchronousJobRunner, AsynchronousJobState
@@ -54,6 +55,16 @@ def _write_logfile(logfile, msg):
     with open(logfile, 'w') as fil:
         fil.write(msg)
 
+def _parse_job_volumes_list(li):
+    # Convert comma separated string to list
+    volume_list = list(li.split(','))
+    # Create the list with right mountpoint and permissions
+    mountpoint_list = []
+    # Convert each element to right format  
+    path = lambda x: {'containerPath': x, 'hostPath': x, 'mode': 'RW'}
+    for i in volume_list:
+        mountpoint_list.append(path(i))
+    return mountpoint_list
 
 class ChronosJobRunner(AsynchronousJobRunner):
     runner_name = 'ChronosRunner'
@@ -99,7 +110,7 @@ class ChronosJobRunner(AsynchronousJobRunner):
             'default': None,
             'map_name': 'container/volumes',
             'map': (
-                lambda x: [{'containerPath': x, 'hostPath': x, 'mode': 'RW'}]
+                lambda x: _parse_job_volumes_list(x)
                 if x is not None else [])
         },
         'max_retries': {
@@ -196,7 +207,7 @@ class ChronosJobRunner(AsynchronousJobRunner):
                 msg = 'Job {name!r} failed more than {retries!s} times'
                 reason = msg.format(name=job_name, retries=str(max_retries))
                 return self._mark_as_failed(job_state, reason)
-        reason = 'Job {name!r} not found'.format(name=job_name)
+        reason = f'Job {job_name!r} not found'
         return self._mark_as_failed(job_state, reason)
 
     def _mark_as_successful(self, job_state):
@@ -238,12 +249,28 @@ class ChronosJobRunner(AsynchronousJobRunner):
             parsed_params.update(to_dict(segments, mapper(value)))
         return parsed_params
 
+    def write_command(self, job_wrapper):
+    # Create command script instead passing it in the container
+    # preventing wrong characters parsing.
+        if not os.path.exists(job_wrapper.working_directory):
+            LOGGER.error("No working directory found")
+
+        path = job_wrapper.working_directory + '/chronos_' + job_wrapper.get_id_tag() + '.sh'
+        mode=0o755
+
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write('#!/bin/bash\n')
+            f.write(job_wrapper.runner_command_line)
+        os.chmod(path, mode)
+        return path
+
     def _get_job_spec(self, job_wrapper):
         job_name = self.JOB_NAME_PREFIX + job_wrapper.get_id_tag()
         job_destination = job_wrapper.job_destination
         template = {
             'async': False,
             'command': job_wrapper.runner_command_line,
+            #'command': '/bin/bash ' + command_script_path,
             'owner': self.runner_params['owner'],
             'disabled': False,
             'schedule': 'R1//PT1S',
@@ -258,13 +285,15 @@ class ChronosJobRunner(AsynchronousJobRunner):
         template['container']['type'] = 'DOCKER'
         template['container']['image'] = self._find_container(
             job_wrapper).container_id
+        # Fix the working directory inside the container
+        template['container']['parameters'] = [{"key": "workdir", "value": job_wrapper.working_directory }]
         return template
 
     def _retrieve_job(self, job_id):
         jobs = self._chronos_client.list()
         job = [x for x in jobs if x['name'] == job_id]
         if len(job) > 1:
-            msg = 'Multiple jobs found with name {name!r}'.format(name=job_id)
+            msg = f'Multiple jobs found with name {job_id!r}'
             LOGGER.error(msg)
             raise ChronosRunnerException(msg)
         return job[0] if job else None
