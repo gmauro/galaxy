@@ -256,7 +256,7 @@ class ChronosJobRunner(AsynchronousJobRunner):
             LOGGER.error("No working directory found")
 
         path = job_wrapper.working_directory + '/chronos_' + job_wrapper.get_id_tag() + '.sh'
-        mode=0755
+        mode=0o755
 
         with open(path, 'w', encoding='utf-8') as f:
             f.write('#!/bin/bash\n')
