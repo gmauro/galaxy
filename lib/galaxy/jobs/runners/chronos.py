@@ -61,9 +61,9 @@ def _parse_job_volumes_list(li):
     # Create the list with right mountpoint and permissions
     mountpoint_list = []
     # Convert each element to right format  
-    path = lambda x: {'containerPath': x, 'hostPath': x, 'mode': 'RW'}
+    path = lambda x,y,z: {'hostPath': x, 'containerPath': y, 'mode': z}
     for i in volume_list:
-        mountpoint_list.append(path(i))
+        mountpoint_list.append(path(i.split(':'))
     return mountpoint_list
 
 class ChronosJobRunner(AsynchronousJobRunner):
